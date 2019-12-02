@@ -216,13 +216,11 @@ class Decoder(nn.Module):
         return feat_outputs, feat_residual_outputs, stop_tokens, attention_weights
 
     def step(self, step_input: torch.tensor, encoder_feature: torch.Tensor, encoder_mask: torch.Tensor):
-        # decoder RNN: s_i = RNN(s_i−1,y_i−1,c_i−1)
         rnn_input = torch.cat((step_input, self.attention_context), dim=1)
         self.h_list[0], self.c_list[0] = self.rnn[0](rnn_input, (self.h_list[0], self.c_list[0]))
         self.h_list[1], self.c_list[1] = self.rnn[1](self.h_list[0], (self.h_list[1], self.c_list[1]))
         rnn_output = self.h_list[1]
 
-        # attention: c_i = LocationSensitiveAttention(s_i, h, ca_i-1)
         self.attention_context, attention_weight = self.attention(rnn_output,
                                                                   encoder_feature,
                                                                   self.cumulative_attention_weight,
@@ -257,18 +255,6 @@ class LocationSensitiveAttention(nn.Module):
 
     def get_energy(
             self, query: torch.Tensor, values: torch.Tensor, cumulative_attention_weights: torch.Tensor, mask=None):
-        """Calculate energy:
-           e_ij = score(s_i, ca_i-1, h_j) = v tanh(W s_i + V h_j + U f_ij + b)
-           where f_i = F * ca_i-1,
-                 ca_i-1 = sum_{j=1}^{T-1} a_i-1
-        Args:
-            query: [N, Hd], decoder state
-            values: [N, Ti, He], encoder hidden representation
-            cumulative_attention_weights: cumulative attention weights
-            mask:
-        Returns:
-            energies: [N, Ti]
-        """
         query = query.unsqueeze(2)
         Ws = self.W(query)
         if self.Vh is None:
@@ -282,16 +268,6 @@ class LocationSensitiveAttention(nn.Module):
 
     def forward(self, query: torch.Tensor, values: torch.Tensor,
                 cumulative_attention_weights: torch.Tensor, mask: torch.Tensor = None):
-        """
-        Args:
-            query: [N, Hd], decoder state
-            values: [N, Ti, He], encoder hidden representation
-            cumulative_attention_weights:
-            mask: [N, Ti]
-        Returns:
-            attention_context: [N, He]
-            attention_weights: [N, Ti]
-        """
         energies = self.get_energy(query, values, cumulative_attention_weights, mask)  # [N, Ti]
         attention_weights = F.softmax(energies, dim=1)  # [N, Ti]
         attention_context = torch.bmm(values, attention_weights.unsqueeze(2))
